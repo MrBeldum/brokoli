@@ -26,11 +26,38 @@ func isPublicObservabilityRequest(r *http.Request) bool {
 	return r.Method == http.MethodGet && (r.URL.Path == "/health" || r.URL.Path == "/metrics")
 }
 
+// isDataPlaneBlobRequest reports whether a request targets the
+// capability-authenticated blob endpoints.
+//
+// Those endpoints do NOT bypass authorization. They carry their own,
+// which is strictly narrower than a session: a signed capability bound
+// to one object, one attempt and one fencing generation, checked against
+// a tenant the request never supplies. What they bypass is the
+// requirement to be a SESSION, because a worker cannot produce one and
+// holds an opaque token instead (see blobAuth).
+//
+// Matched by shape rather than by prefix so this can never widen: three
+// methods, a fixed six-segment path under /api/runs, and nothing else.
+func isDataPlaneBlobRequest(r *http.Request) bool {
+	switch r.Method {
+	case http.MethodGet, http.MethodPut, http.MethodPost:
+	default:
+		return false
+	}
+	p := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	// api runs {runID} nodes {nodeID} attempts {attempt} blobs [objectID]
+	if len(p) < 8 || len(p) > 9 {
+		return false
+	}
+	return p[0] == "api" && p[1] == "runs" && p[3] == "nodes" &&
+		p[5] == "attempts" && p[7] == "blobs"
+}
+
 func withPublicAuthBypass(middleware func(http.Handler) http.Handler) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		protected := middleware(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if isPublicCapabilitiesRequest(r) || isPublicObservabilityRequest(r) {
+			if isPublicCapabilitiesRequest(r) || isPublicObservabilityRequest(r) || isDataPlaneBlobRequest(r) {
 				next.ServeHTTP(w, r)
 				return
 			}
