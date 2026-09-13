@@ -342,14 +342,14 @@ output_data = {"columns": ["id", "value"], "rows": out}
 	}
 
 	// The preview kept only its 50 rows.
-	previewCols, previewRows, err := s.GetNodePreview(run.ID, "double")
+	preview, err := s.GetNodePreview(run.ID, "double")
 	if err != nil {
 		t.Fatalf("get preview: %v", err)
 	}
-	if len(previewRows) == 0 || len(previewRows) > 50 {
-		t.Fatalf("preview rows = %d, want 1..50", len(previewRows))
+	if len(preview.Rows) == 0 || len(preview.Rows) > 50 {
+		t.Fatalf("preview rows = %d, want 1..50", len(preview.Rows))
 	}
-	if len(previewCols) == 0 {
+	if len(preview.Columns) == 0 {
 		t.Fatal("preview lost its columns")
 	}
 }
