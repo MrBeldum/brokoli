@@ -11,6 +11,61 @@ reconstruct from git archaeology.
 
 ## [Unreleased]
 
+> **Breaking:** `confidence` is gone from every entry in `column_edges` on
+> `GET /api/lineage`, replaced by `evidence`. A client that reads it as a
+> number will find it absent.
+
+### Changed
+
+- **Column lineage is derived from the pipeline definition instead of
+  guessed from column names** (ADR-039). Every node type now declares how
+  its output columns map to its inputs, or declares that it cannot say.
+  (#632) -- @hc12r
+
+  What changes in the graph:
+
+  - A **derived column now names what it derives from**. `total = price *
+    qty` previously produced no edge at all, because the name match found
+    nothing called `total` upstream.
+  - A **coincidental name match no longer produces an edge.** Two
+    unrelated datasets that both had `id` used to be joined by one.
+  - **No edges are drawn through a node that runs user code.** A code,
+    dataset_map, dataset_filter, task or dbt node reports that it cannot
+    trace columns, and why. The graph shows the reason.
+  - `mapping_reason` now states the derivation in the pipeline's own
+    terms -- `price * qty`, `renamed from qty`, `join key: id matched
+    against cust_id`. It was the constant string
+    `observed column name match`.
+
+  **Node and dataset lineage is unchanged and stays complete**, including
+  through the nodes above. Which node produced which dataset is always
+  knowable; which field produced which field is not, and the graph now
+  distinguishes the two.
+
+- `evidence` replaces `confidence` on each column edge: `declared`,
+  `attested`, `parsed` or `inferred`. Filter to `declared` and `attested`
+  for facts only. `confidence` was the literal `0.7` on every edge ever
+  produced, which the UI rendered as "70% inferred". (#632) -- @hc12r
+
+### Added
+
+- `columns_opaque` and `opaque_reason` on a lineage node, so a node with
+  no column edges says why rather than looking unfinished. (#632)
+  -- @hc12r
+- `models.AllNodeTypes` and `models.IsKnownNodeType`, one canonical list
+  for the gates that iterate node types. (#632) -- @hc12r
+
+### Upgrading
+
+1. **Replace `confidence` with `evidence`** wherever you read
+   `column_edges`. There is no numeric equivalent; the value was constant.
+2. **Expect fewer column edges**, and none at all for a pipeline built on
+   code nodes. The edges that are gone were name matches with nothing
+   behind them. Check `columns_opaque` on a node to tell "no lineage" from
+   "lineage not traceable here".
+3. **A new node type must declare its column lineage** or declare itself
+   opaque, or `TestEveryNodeTypeDeclaresItsColumnLineage` fails.
+
 ## [0.11.24] - 2026-09-14
 
 > **Breaking:** `extensions.OpenLineageEmitter`'s three methods take two new

@@ -17,6 +17,17 @@ type LineageNode struct {
 	PipelineID string           `json:"pipeline_id,omitempty"` // which pipeline owns this (processing nodes only)
 	Pipeline   string           `json:"pipeline,omitempty"`    // pipeline name (processing nodes only)
 	Metadata   *LineageMetadata `json:"metadata,omitempty"`
+	// ColumnsOpaque means this node cannot say which of its output
+	// columns came from which input, so no column edges are drawn
+	// through it (ADR-039).
+	//
+	// It is a statement, not a gap. A code node runs arbitrary user code
+	// and nothing available to this engine can trace a column through
+	// it; saying so is the correct answer, and it is rendered as one.
+	// Node-level lineage through the same node stays complete.
+	ColumnsOpaque bool `json:"columns_opaque,omitempty"`
+	// OpaqueReason is why, in terms a reader of the graph can act on.
+	OpaqueReason string `json:"opaque_reason,omitempty"`
 }
 
 // LineageMetadata is the latest observed metadata for a dataset or processing
@@ -70,12 +81,22 @@ type LineageGraph struct {
 }
 
 type LineageColumnEdge struct {
-	From          string  `json:"from"`
-	FromColumn    string  `json:"from_column"`
-	To            string  `json:"to"`
-	ToColumn      string  `json:"to_column"`
-	Confidence    float64 `json:"confidence"`
-	MappingReason string  `json:"mapping_reason"`
+	From       string `json:"from"`
+	FromColumn string `json:"from_column"`
+	To         string `json:"to"`
+	ToColumn   string `json:"to_column"`
+	// Evidence is how this edge was established (ADR-039). It replaces a
+	// Confidence float that was 0.7 on every edge ever produced, which
+	// carried no information while reading as a calibrated probability.
+	//
+	// A consumer that wants only facts filters to "declared" and
+	// "attested".
+	Evidence EvidenceLevel `json:"evidence"`
+	// MappingReason states the derivation in the pipeline's own terms:
+	// "renamed from qty", "price * qty", "join key: id matched against
+	// customer_id". It used to be the constant string "observed column
+	// name match".
+	MappingReason string `json:"mapping_reason"`
 }
 
 // BuildLineageGraph scans all pipelines and constructs a lineage graph
@@ -197,11 +218,54 @@ func buildLineageGraph(pipelines []models.Pipeline, profiles map[string]LineageP
 				Pipeline:   p.Name,
 			}
 
-			if fromProfile, ok := profiles[profileKey(p.ID, e.From)]; ok {
-				if toProfile, ok := profiles[profileKey(p.ID, e.To)]; ok {
-					for _, mapping := range inferColumnMappings(fromLID, toLID, fromProfile, toProfile) {
-						columnEdgeSet[mapping.From+"|"+mapping.FromColumn+"|"+mapping.To+"|"+mapping.ToColumn] = mapping
+		}
+
+		// Column edges, from what each node type declares (ADR-039).
+		//
+		// Per node rather than per edge, because the declaration is a
+		// property of the node: a join's output depends on both its
+		// inputs together, and asking one edge at a time cannot express
+		// that.
+		for _, n := range p.Nodes {
+			toLID, ok := lineageID[n.ID]
+			if !ok || toLID == "" {
+				continue
+			}
+
+			req := ColumnLineageRequest{Node: pipeNodes[n.ID]}
+			for _, e := range p.Edges {
+				if e.To != n.ID {
+					continue
+				}
+				fromLID, ok := lineageID[e.From]
+				if !ok || fromLID == "" {
+					continue
+				}
+				req.Inputs = append(req.Inputs, NodeInput{
+					Node:    fromLID,
+					Columns: observedColumns(profiles, p.ID, e.From),
+				})
+			}
+
+			decl := ColumnLineageFor(req)
+			if decl.Opaque {
+				// The node says it cannot trace columns, and the graph
+				// says so too rather than leaving a reader to wonder why
+				// a node has no column edges. No edges are drawn through
+				// it: a plausible claim about a black box is worse than
+				// no claim.
+				markOpaque(procNodes, toLID, decl.Reason)
+				markOpaque(assetNodes, toLID, decl.Reason)
+				continue
+			}
+			for _, d := range decl.Derivations {
+				for _, src := range d.From {
+					edge := LineageColumnEdge{
+						From: src.Node, FromColumn: src.Column,
+						To: toLID, ToColumn: d.Output,
+						Evidence: d.Evidence, MappingReason: d.Rule,
 					}
+					columnEdgeSet[edge.From+"|"+edge.FromColumn+"|"+edge.To+"|"+edge.ToColumn] = edge
 				}
 			}
 		}
@@ -265,25 +329,40 @@ func metadataFromProfile(datasetID string, profile LineageProfile) *LineageMetad
 	return metadata
 }
 
-func inferColumnMappings(from, to string, source, target LineageProfile) []LineageColumnEdge {
-	if source.Profile == nil || target.Profile == nil {
+// observedColumns returns the column names last observed on a node's
+// output, or nothing when the pipeline has never run.
+//
+// A source's columns are not in the pipeline definition: a CSV's header
+// is a fact about the file, not about the DAG. So the declared mapping
+// rule comes from the node type and the column names come from the last
+// execution. A pipeline that has never run still has a lineage graph;
+// it just has no column edges to draw yet, which is the honest answer
+// rather than a guess at what the file might contain.
+func observedColumns(profiles map[string]LineageProfile, pipelineID, nodeID string) []string {
+	profile, ok := profiles[profileKey(pipelineID, nodeID)]
+	if !ok || profile.Profile == nil {
 		return nil
 	}
-	targetColumns := make(map[string]struct{}, len(target.Profile.Columns))
-	for _, column := range target.Profile.Columns {
-		targetColumns[column.Name] = struct{}{}
+	out := make([]string, 0, len(profile.Profile.Columns))
+	for _, c := range profile.Profile.Columns {
+		out = append(out, c.Name)
 	}
-	mappings := make([]LineageColumnEdge, 0)
-	for _, column := range source.Profile.Columns {
-		if _, ok := targetColumns[column.Name]; !ok {
-			continue
-		}
-		mappings = append(mappings, LineageColumnEdge{
-			From: from, FromColumn: column.Name, To: to, ToColumn: column.Name,
-			Confidence: 0.7, MappingReason: "observed column name match",
-		})
+	return out
+}
+
+// markOpaque records on the node that it cannot trace columns, and why.
+//
+// A no-op when the node is not in this map: a lineage ID is either an
+// asset or a processing node, and the caller tries both rather than
+// working out which.
+func markOpaque(nodes map[string]LineageNode, id, reason string) {
+	node, ok := nodes[id]
+	if !ok {
+		return
 	}
-	return mappings
+	node.ColumnsOpaque = true
+	node.OpaqueReason = reason
+	nodes[id] = node
 }
 
 // --- Asset extraction helpers ---

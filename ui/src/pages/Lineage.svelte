@@ -14,6 +14,11 @@
     pipeline_id?: string;
     pipeline?: string;
     metadata?: LineageMetadata;
+    // This node cannot say which output column came from which input, so
+    // no column edges are drawn through it (ADR-039). A statement, not a
+    // gap: node-level lineage through it stays complete.
+    columns_opaque?: boolean;
+    opaque_reason?: string;
   }
   interface LineageMetadata {
     namespace?: string;
@@ -41,7 +46,11 @@
     from_column: string;
     to: string;
     to_column: string;
-    confidence: number;
+    // How this edge was established (ADR-039). Replaces a `confidence`
+    // float that was 0.7 on every edge ever produced.
+    evidence: "declared" | "attested" | "parsed" | "inferred";
+    // The derivation in the pipeline's own terms: "price * qty",
+    // "renamed from qty". Was the constant "observed column name match".
     mapping_reason: string;
   }
   interface Pos {
@@ -683,6 +692,19 @@
             </div>
           {/if}
 
+          {#if selectedNode.columns_opaque}
+            <div class="detail-section">
+              <span class="detail-label">Column-level lineage</span>
+              <span class="opaque-note">
+                Not traced through this node. {selectedNode.opaque_reason}
+              </span>
+              <span class="opaque-note-sub">
+                Which datasets this node read and wrote is still shown above; only the
+                column-to-column mapping is unavailable.
+              </span>
+            </div>
+          {/if}
+
           {#if selectedColumnEdges.length > 0}
             <div class="detail-section">
               <span class="detail-label">Column-level lineage ({selectedColumnEdges.length})</span>
@@ -692,8 +714,8 @@
                     <code>{edge.from_column}</code>
                     <span>→</span>
                     <code>{edge.to_column}</code>
-                    <small title={edge.mapping_reason}
-                      >{Math.round(edge.confidence * 100)}% inferred</small
+                    <small class="evidence evidence-{edge.evidence}" title={edge.mapping_reason}
+                      >{edge.mapping_reason || edge.evidence}</small
                     >
                   </div>
                 {/each}
@@ -1122,6 +1144,44 @@
     overflow-y: auto;
   }
   .column-row,
+  /* Evidence level, not a percentage. The old badge read
+     "70% inferred" on every edge because the number behind it was a
+     literal 0.7; these say how the edge was actually established. */
+  .evidence {
+    flex-shrink: 0;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 9px;
+    text-transform: lowercase;
+    white-space: nowrap;
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .evidence-declared {
+    background: var(--success-bg, rgba(34, 197, 94, 0.12));
+    color: var(--success, #16a34a);
+  }
+  .evidence-attested {
+    background: var(--success-bg, rgba(34, 197, 94, 0.12));
+    color: var(--success, #16a34a);
+  }
+  .evidence-parsed,
+  .evidence-inferred {
+    background: var(--warning-bg, rgba(234, 179, 8, 0.12));
+    color: var(--warning, #ca8a04);
+  }
+  .opaque-note {
+    color: var(--text-secondary);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+  .opaque-note-sub {
+    margin-top: 4px;
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.5;
+  }
   .column-lineage-row {
     display: flex;
     align-items: center;
