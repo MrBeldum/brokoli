@@ -1322,8 +1322,9 @@ func (r *Runner) executeNode(node models.Node, outputs *nodeOutputs, edgeStates 
 				// DatasetRef.RowCount is populated on every ref-producing
 				// path, so truncation and total_rows come from the ref —
 				// no peek past the filled preview batch (which missed the
-				// 51..1000 single-batch case).
-				total := int(outputRef.RowCount)
+				// 51..1000 single-batch case). Engine is authoritative here;
+				// SaveNodePreview only re-derives as a safety net.
+				total := outputRef.RowCount
 				refPreview := store.NodePreview{
 					Columns:   preview.Columns,
 					Rows:      preview.Rows,
@@ -1379,9 +1380,9 @@ func (r *Runner) executeNode(node models.Node, outputs *nodeOutputs, edgeStates 
 						Columns: output.Columns, Rows: previewRows,
 					}
 				} else {
-					n := len(output.Rows)
+					n := int64(len(output.Rows))
 					if err := r.store.SaveNodePreview(r.run.ID, node.ID, store.NodePreview{
-						Columns: output.Columns, Rows: output.Rows, Truncated: n > store.NodePreviewRowLimit, TotalRows: &n,
+						Columns: output.Columns, Rows: output.Rows, Truncated: n > int64(store.NodePreviewRowLimit), TotalRows: &n,
 					}); err != nil {
 						attemptSpan.RecordError(err)
 						attemptSpan.SetStatus(codes.Error, err.Error())

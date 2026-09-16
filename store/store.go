@@ -493,11 +493,13 @@ const NodePreviewRowLimit = 50
 // NodePreview is the truncated sample persisted for the editor, plus
 // whether that sample is the whole output. TotalRows is nil when the
 // engine only knew it hit the preview cap and not the true size.
+// TotalRows is int64 so a large DatasetRef.RowCount cannot wrap on a
+// 32-bit build (and so the conversion is not a G115 candidate).
 type NodePreview struct {
 	Columns   []string
 	Rows      []common.DataRow
 	Truncated bool
-	TotalRows *int // nil when unknown
+	TotalRows *int64 // nil when unknown
 }
 
 // PreviewStore persists per-node data previews for the editor.

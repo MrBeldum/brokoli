@@ -205,6 +205,11 @@ func (s *SQLiteStore) migrate() error {
 	s.db.Exec(`ALTER TABLE node_runs ADD COLUMN queue_ms INTEGER NOT NULL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE node_previews ADD COLUMN truncated INTEGER NOT NULL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE node_previews ADD COLUMN total_rows INTEGER`)
+	// Previews written before truncated existed were capped at
+	// NodePreviewRowLimit (50) rows. A sample exactly at that cap is
+	// almost always truncated, but DEFAULT 0 would claim completeness.
+	// Mark them truncated with total unknown (total_rows stays NULL).
+	s.db.Exec(`UPDATE node_previews SET truncated = 1 WHERE json_array_length(rows) = 50 AND total_rows IS NULL`)
 	s.db.Exec(`ALTER TABLE node_runs ADD COLUMN rows_per_sec REAL NOT NULL DEFAULT 0`)
 	s.db.Exec(`ALTER TABLE node_runs ADD COLUMN trace_id TEXT NOT NULL DEFAULT ''`)
 	s.db.Exec(`ALTER TABLE node_runs ADD COLUMN span_id TEXT NOT NULL DEFAULT ''`)
@@ -1989,12 +1994,13 @@ func (s *SQLiteStore) SaveNodePreview(runID, nodeID string, preview NodePreview)
 	var total any
 	if preview.TotalRows != nil {
 		total = *preview.TotalRows
-	} else {
-		total = nil
 	}
-	// When the caller passed the full output, derive truncation here.
+	// Engine is authoritative for Truncated/TotalRows when it knows the
+	// full size (DatasetRef.RowCount or len(output.Rows)). The store
+	// re-derives below only as a safety net for callers that omit the
+	// flag or hand more rows than NodePreviewRowLimit.
 	if preview.TotalRows != nil && !truncated {
-		truncated = *preview.TotalRows > NodePreviewRowLimit
+		truncated = *preview.TotalRows > int64(NodePreviewRowLimit)
 	}
 	if len(rows) > NodePreviewRowLimit {
 		rows = rows[:NodePreviewRowLimit]
@@ -2002,7 +2008,7 @@ func (s *SQLiteStore) SaveNodePreview(runID, nodeID string, preview NodePreview)
 		if preview.TotalRows == nil {
 			// Caller handed more than the cap without declaring total —
 			// the pre-truncate length is the true total.
-			n := len(preview.Rows)
+			n := int64(len(preview.Rows))
 			total = n
 		}
 	}
@@ -2045,7 +2051,7 @@ func (s *SQLiteStore) GetNodePreview(runID, nodeID string) (NodePreview, error) 
 	}
 	out := NodePreview{Columns: columns, Rows: rows, Truncated: truncatedInt != 0}
 	if total.Valid {
-		n := int(total.Int64)
+		n := total.Int64
 		out.TotalRows = &n
 	}
 	return out, nil
