@@ -1836,10 +1836,10 @@ func (s *PostgresStore) SaveNodePreview(runID, nodeID string, preview NodePrevie
 		total = *preview.TotalRows
 	}
 	if preview.TotalRows != nil && !truncated {
-		truncated = *preview.TotalRows > 50
+		truncated = *preview.TotalRows > NodePreviewRowLimit
 	}
-	if len(rows) > 50 {
-		rows = rows[:50]
+	if len(rows) > NodePreviewRowLimit {
+		rows = rows[:NodePreviewRowLimit]
 		truncated = true
 		if preview.TotalRows == nil {
 			n := len(preview.Rows)

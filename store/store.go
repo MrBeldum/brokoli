@@ -485,6 +485,11 @@ type LogStore interface {
 	GetLogs(runID string) ([]models.LogEntry, error)
 }
 
+// NodePreviewRowLimit is how many rows SaveNodePreview keeps for the
+// editor sample. Callers that derive Truncated/TotalRows from a known
+// full size use the same cap so the stored flag matches the truncated rows.
+const NodePreviewRowLimit = 50
+
 // NodePreview is the truncated sample persisted for the editor, plus
 // whether that sample is the whole output. TotalRows is nil when the
 // engine only knew it hit the preview cap and not the true size.

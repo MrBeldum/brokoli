@@ -13,6 +13,7 @@ import (
 	"github.com/Tnsor-Labs/brokoli/models"
 	"github.com/Tnsor-Labs/brokoli/pkg/artifact"
 	"github.com/Tnsor-Labs/brokoli/pkg/common"
+	"github.com/Tnsor-Labs/brokoli/store"
 )
 
 // TestNDJSONBatchReader_EquivalentToDecodeNDJSON is the foundational
@@ -341,16 +342,22 @@ output_data = {"columns": ["id", "value"], "rows": out}
 		}
 	}
 
-	// The preview kept only its 50 rows.
+	// The preview kept only its 50 rows, flagged truncated with the true total.
 	preview, err := s.GetNodePreview(run.ID, "double")
 	if err != nil {
 		t.Fatalf("get preview: %v", err)
 	}
-	if len(preview.Rows) == 0 || len(preview.Rows) > 50 {
-		t.Fatalf("preview rows = %d, want 1..50", len(preview.Rows))
+	if len(preview.Rows) == 0 || len(preview.Rows) > store.NodePreviewRowLimit {
+		t.Fatalf("preview rows = %d, want 1..%d", len(preview.Rows), store.NodePreviewRowLimit)
 	}
 	if len(preview.Columns) == 0 {
 		t.Fatal("preview lost its columns")
+	}
+	if !preview.Truncated {
+		t.Fatal("preview Truncated = false, want true for 5000-row output")
+	}
+	if preview.TotalRows == nil || *preview.TotalRows != 5000 {
+		t.Fatalf("preview TotalRows = %v, want 5000", preview.TotalRows)
 	}
 }
 

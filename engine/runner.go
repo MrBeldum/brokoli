@@ -1312,17 +1312,23 @@ func (r *Runner) executeNode(node models.Node, outputs *nodeOutputs, edgeStates 
 			}
 			if outputRef != nil && !r.dryRun {
 				outputs.PutRef(node.ID, outputRef)
-				preview, previewTruncated, perr := previewFromRef(outputs, outputRef, 50)
+				preview, perr := previewFromRef(outputs, outputRef, store.NodePreviewRowLimit)
 				if perr != nil {
 					attemptSpan.RecordError(perr)
 					attemptSpan.SetStatus(codes.Error, perr.Error())
 					attemptSpan.End()
 					return nil, fmt.Errorf("persist node preview for %s (attempt %d): %w", node.Name, attempt, perr)
 				}
-				refPreview := store.NodePreview{Columns: preview.Columns, Rows: preview.Rows, Truncated: previewTruncated}
-				if !previewTruncated {
-					n := len(preview.Rows)
-					refPreview.TotalRows = &n
+				// DatasetRef.RowCount is populated on every ref-producing
+				// path, so truncation and total_rows come from the ref —
+				// no peek past the filled preview batch (which missed the
+				// 51..1000 single-batch case).
+				total := int(outputRef.RowCount)
+				refPreview := store.NodePreview{
+					Columns:   preview.Columns,
+					Rows:      preview.Rows,
+					Truncated: outputRef.RowCount > int64(store.NodePreviewRowLimit),
+					TotalRows: &total,
 				}
 				if err := r.store.SaveNodePreview(r.run.ID, node.ID, refPreview); err != nil {
 					attemptSpan.RecordError(err)
@@ -1375,7 +1381,7 @@ func (r *Runner) executeNode(node models.Node, outputs *nodeOutputs, edgeStates 
 				} else {
 					n := len(output.Rows)
 					if err := r.store.SaveNodePreview(r.run.ID, node.ID, store.NodePreview{
-						Columns: output.Columns, Rows: output.Rows, Truncated: n > 50, TotalRows: &n,
+						Columns: output.Columns, Rows: output.Rows, Truncated: n > store.NodePreviewRowLimit, TotalRows: &n,
 					}); err != nil {
 						attemptSpan.RecordError(err)
 						attemptSpan.SetStatus(codes.Error, err.Error())
