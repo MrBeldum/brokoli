@@ -122,7 +122,17 @@ func (h *PipelineHandler) List(w http.ResponseWriter, r *http.Request) {
 
 	// Cursor-based pagination — no COUNT, uses UUIDv7 ordering
 	if orgID != "" {
-		pipelines, hasNext, err := h.store.ListPipelinesByOrgCursor(orgID, after, limit)
+		// Scoped to the workspace as well as the org. Listing by org alone
+		// showed every pipeline in the organization under every workspace,
+		// so switching workspaces changed nothing on this page.
+		wsID, ok := effectiveWorkspace(r)
+		if !ok {
+			writeJSON(w, http.StatusOK, store.CursorResult{
+				Items: []PipelineSummary{}, HasNext: false, Limit: limit,
+			})
+			return
+		}
+		pipelines, hasNext, err := h.store.ListPipelinesByOrgAndWorkspaceCursor(orgID, wsID, after, limit)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -169,6 +179,10 @@ func (h *PipelineHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ValidateOrgAccess(r, pipeline.OrgID) {
 		DenyOrgAccess(w)
+		return
+	}
+	if !userOwnsWorkspace(r, pipeline.WorkspaceID) {
+		denyWorkspaceAccess(w)
 		return
 	}
 	writeJSON(w, http.StatusOK, pipeline)
@@ -329,6 +343,10 @@ func (h *PipelineHandler) Update(w http.ResponseWriter, r *http.Request) {
 		DenyOrgAccess(w)
 		return
 	}
+	if !userOwnsWorkspace(r, existing.WorkspaceID) {
+		denyWorkspaceAccess(w)
+		return
+	}
 
 	// Reject UI updates for git-managed pipelines
 	if existing.Source == models.PipelineSourceGit {
@@ -427,6 +445,10 @@ func (h *PipelineHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ValidateOrgAccess(r, existing.OrgID) {
 		DenyOrgAccess(w)
+		return
+	}
+	if !userOwnsWorkspace(r, existing.WorkspaceID) {
+		denyWorkspaceAccess(w)
 		return
 	}
 
@@ -644,6 +666,10 @@ func (h *PipelineHandler) ListVersions(w http.ResponseWriter, r *http.Request) {
 			DenyOrgAccess(w)
 			return
 		}
+		if !userOwnsWorkspace(r, p.WorkspaceID) {
+			denyWorkspaceAccess(w)
+			return
+		}
 	}
 	versions, err := h.store.ListPipelineVersions(id)
 	if err != nil {
@@ -662,6 +688,10 @@ func (h *PipelineHandler) Rollback(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		if !ValidateOrgAccess(r, existing.OrgID) {
 			DenyOrgAccess(w)
+			return
+		}
+		if !userOwnsWorkspace(r, existing.WorkspaceID) {
+			denyWorkspaceAccess(w)
 			return
 		}
 	} else {
@@ -733,6 +763,10 @@ func (h *PipelineHandler) Validate(w http.ResponseWriter, r *http.Request) {
 		DenyOrgAccess(w)
 		return
 	}
+	if !userOwnsWorkspace(r, p.WorkspaceID) {
+		denyWorkspaceAccess(w)
+		return
+	}
 
 	ve := engine.ValidatePipeline(p, h.executors...)
 	if ve.HasErrors() {
@@ -778,6 +812,10 @@ func (h *PipelineHandler) Plan(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ValidateOrgAccess(r, p.OrgID) {
 		DenyOrgAccess(w)
+		return
+	}
+	if !userOwnsWorkspace(r, p.WorkspaceID) {
+		denyWorkspaceAccess(w)
 		return
 	}
 	plan, err := engine.PlanPipeline(p)
@@ -882,6 +920,10 @@ func (h *PipelineHandler) Clone(w http.ResponseWriter, r *http.Request) {
 		DenyOrgAccess(w)
 		return
 	}
+	if !userOwnsWorkspace(r, orig.WorkspaceID) {
+		denyWorkspaceAccess(w)
+		return
+	}
 
 	// Create a deep copy with new IDs
 	clone := *orig
@@ -965,6 +1007,10 @@ func (h *PipelineHandler) ValidateNodes(w http.ResponseWriter, r *http.Request) 
 		DenyOrgAccess(w)
 		return
 	}
+	if !userOwnsWorkspace(r, p.WorkspaceID) {
+		denyWorkspaceAccess(w)
+		return
+	}
 
 	results := engine.ValidateNodes(p.Nodes)
 	if results == nil {
@@ -984,6 +1030,10 @@ func (h *PipelineHandler) Export(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ValidateOrgAccess(r, p.OrgID) {
 		DenyOrgAccess(w)
+		return
+	}
+	if !userOwnsWorkspace(r, p.WorkspaceID) {
+		denyWorkspaceAccess(w)
 		return
 	}
 
