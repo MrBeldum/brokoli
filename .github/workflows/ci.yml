@@ -38,7 +38,7 @@ jobs:
           # Matches go.mod's own toolchain directive. When these differ,
           # Go downloads the toolchain go.mod asks for on top of the one
           # setup-go installed -- once per job, every run.
-          go-version: "1.26.6"
+          go-version: "1.26.10"
 
       - name: Check formatting
         run: |
@@ -158,7 +158,7 @@ jobs:
           # Matches go.mod's own toolchain directive. When these differ,
           # Go downloads the toolchain go.mod asks for on top of the one
           # setup-go installed -- once per job, every run.
-          go-version: "1.26.6"
+          go-version: "1.26.10"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -307,7 +307,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.10"
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -345,7 +345,7 @@ jobs:
           # Matches go.mod's own toolchain directive. When these differ,
           # Go downloads the toolchain go.mod asks for on top of the one
           # setup-go installed -- once per job, every run.
-          go-version: "1.26.6"
+          go-version: "1.26.10"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
